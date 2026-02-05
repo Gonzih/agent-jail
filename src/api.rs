@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
+use crate::cost::{CostAccumulator, CostSummary, LlmUsageEvent, ModelCostDetail};
 use crate::error::{ApiError, ApiResponse};
 use crate::llm::LlmSessionMode;
 use crate::observe::filesystem::FilesystemObserver;
@@ -42,6 +43,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/snapshots/:sid/restore", post(restore_snapshot))
         .route("/snapshots/:sid/branch", post(branch_snapshot))
         .route("/snapshots/:sid/diff", get(diff_snapshot))
+        // Cost tracking
+        .route("/jails/:id/cost", get(get_cost))
+        .route("/jails/:id/cost/breakdown", get(get_cost_breakdown))
+        .route("/jails/:id/llm/usage", get(get_llm_usage))
         // LLM Interceptor
         .route("/jails/:id/llm", get(get_llm_session))
         .route("/jails/:id/llm/recordings", get(get_llm_recordings))
@@ -241,6 +246,19 @@ async fn stop_jail(
         .iter()
         .filter(|e| matches!(e, ObservationEvent::Process(_)))
         .count() as u64;
+
+    // Accumulate LLM usage stats
+    let mut acc = CostAccumulator::default();
+    for event in &events {
+        if let ObservationEvent::LlmUsage(u) = event {
+            acc.record(&u.model, u.input_tokens, u.output_tokens, u.cost_usd);
+        }
+    }
+    jail.stats.llm_requests = acc.total_requests;
+    jail.stats.llm_input_tokens = acc.total_input_tokens;
+    jail.stats.llm_output_tokens = acc.total_output_tokens;
+    jail.stats.llm_cost_usd = acc.total_llm_cost_usd;
+    jail.stats.cost_accumulator = acc;
 
     jail.status = JailStatus::Stopped;
     jail.stopped_at = Some(chrono::Utc::now());
@@ -700,6 +718,111 @@ async fn diff_snapshot(
             "different": [],
         }))))
     }
+}
+
+// ── Cost Tracking ─────────────────────────────────────────
+
+async fn get_cost(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let jail = state
+        .get_jail(&id)
+        .ok_or_else(|| ApiError::NotFound(format!("Jail not found: {}", id)))?;
+
+    let runtime_secs = jail
+        .stopped_at
+        .unwrap_or_else(chrono::Utc::now)
+        .signed_duration_since(jail.created_at)
+        .num_seconds() as f64;
+
+    let acc = &jail.stats.cost_accumulator;
+    let mut by_model = HashMap::new();
+    for (model, &model_cost) in &acc.cost_by_model {
+        let total_model_tokens = acc.tokens_by_model.get(model).copied().unwrap_or(0);
+        by_model.insert(
+            model.clone(),
+            ModelCostDetail {
+                requests: 0, // we don't track per-model request count in accumulator yet
+                cost_usd: model_cost,
+                input_tokens: 0,
+                output_tokens: 0,
+            },
+        );
+        // Enrich from events if available
+        if let Ok(events) = state.storage.read_events(&id, Some("llm_usage")) {
+            let mut req_count = 0u64;
+            let mut inp = 0u64;
+            let mut outp = 0u64;
+            for event in &events {
+                if let ObservationEvent::LlmUsage(e) = event {
+                    if e.model == *model {
+                        req_count += 1;
+                        inp += e.input_tokens;
+                        outp += e.output_tokens;
+                    }
+                }
+            }
+            if let Some(detail) = by_model.get_mut(model) {
+                detail.requests = req_count;
+                detail.input_tokens = inp;
+                detail.output_tokens = outp;
+            }
+        }
+        let _ = total_model_tokens; // used for quick summary when events unavailable
+    }
+
+    let summary = CostSummary {
+        jail_id: id,
+        total_cost_usd: acc.total_llm_cost_usd,
+        total_requests: acc.total_requests,
+        total_input_tokens: acc.total_input_tokens,
+        total_output_tokens: acc.total_output_tokens,
+        by_model,
+        runtime_secs,
+    };
+
+    Ok(Json(ApiResponse::ok(summary)))
+}
+
+async fn get_cost_breakdown(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let _jail = state
+        .get_jail(&id)
+        .ok_or_else(|| ApiError::NotFound(format!("Jail not found: {}", id)))?;
+
+    let events = state.storage.read_events(&id, Some("llm_usage"))?;
+    let usage_events: Vec<LlmUsageEvent> = events
+        .into_iter()
+        .filter_map(|e| match e {
+            ObservationEvent::LlmUsage(u) => Some(u),
+            _ => None,
+        })
+        .collect();
+
+    Ok(Json(ApiResponse::ok(usage_events)))
+}
+
+async fn get_llm_usage(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let _jail = state
+        .get_jail(&id)
+        .ok_or_else(|| ApiError::NotFound(format!("Jail not found: {}", id)))?;
+
+    let events = state.storage.read_events(&id, Some("llm_usage"))?;
+    let usage_events: Vec<LlmUsageEvent> = events
+        .into_iter()
+        .filter_map(|e| match e {
+            ObservationEvent::LlmUsage(u) => Some(u),
+            _ => None,
+        })
+        .collect();
+
+    Ok(Json(ApiResponse::ok(usage_events)))
 }
 
 // ── LLM Interceptor ───────────────────────────────────────────

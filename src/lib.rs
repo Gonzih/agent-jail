@@ -1,5 +1,6 @@
 pub mod api;
 pub mod config;
+pub mod cost;
 pub mod error;
 pub mod jail;
 pub mod llm;

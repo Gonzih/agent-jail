@@ -75,6 +75,7 @@ impl Storage {
             ObservationEvent::File(_) => "filesystem.jsonl",
             ObservationEvent::Network(_) => "network.jsonl",
             ObservationEvent::Process(_) => "processes.jsonl",
+            ObservationEvent::LlmUsage(_) => "llm_usage.jsonl",
         };
         let path = dir.join(filename);
         let mut file = fs::OpenOptions::new()
@@ -101,6 +102,7 @@ impl Storage {
             ("file", "filesystem.jsonl"),
             ("network", "network.jsonl"),
             ("process", "processes.jsonl"),
+            ("llm_usage", "llm_usage.jsonl"),
         ];
 
         let mut events = Vec::new();

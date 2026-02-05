@@ -1,3 +1,4 @@
+use crate::cost::{CostAccumulator, LlmUsageEvent};
 use crate::llm::LlmInterceptorConfig;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -178,6 +179,12 @@ pub struct JailStats {
     pub bytes_written: u64,
     pub bytes_read_net: u64,
     pub bytes_sent_net: u64,
+    pub llm_requests: u64,
+    pub llm_input_tokens: u64,
+    pub llm_output_tokens: u64,
+    pub llm_cost_usd: f64,
+    #[serde(default)]
+    pub cost_accumulator: CostAccumulator,
 }
 
 // ── Observation Events ─────────────────────────────────────────
@@ -189,6 +196,7 @@ pub enum ObservationEvent {
     File(FileEvent),
     Network(NetworkEvent),
     Process(ProcessEvent),
+    LlmUsage(LlmUsageEvent),
 }
 
 impl ObservationEvent {
@@ -198,6 +206,7 @@ impl ObservationEvent {
             Self::File(e) => e.ts,
             Self::Network(e) => e.ts,
             Self::Process(e) => e.ts,
+            Self::LlmUsage(e) => e.ts,
         }
     }
 
@@ -207,6 +216,7 @@ impl ObservationEvent {
             Self::File(_) => "file",
             Self::Network(_) => "network",
             Self::Process(_) => "process",
+            Self::LlmUsage(_) => "llm_usage",
         }
     }
 }
