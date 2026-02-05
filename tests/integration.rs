@@ -95,10 +95,7 @@ async fn exec_in_jail(
 
 /// Get events for a jail.
 async fn get_events(state: &Arc<AppState>, jail_id: &str) -> Vec<ObservationEvent> {
-    state
-        .storage
-        .read_events(jail_id, None)
-        .unwrap_or_default()
+    state.storage.read_events(jail_id, None).unwrap_or_default()
 }
 
 // ── Python Tests ────────────────────────────────────────────────
@@ -143,8 +140,8 @@ os.rmdir(d)
 print(json.dumps({'created': f, 'content': content, 'cleaned': True}))
 "#;
 
-    let (status, json) = exec_in_jail(&router, &jail_id, vec!["python3", "-c", script], Some(10))
-        .await;
+    let (status, json) =
+        exec_in_jail(&router, &jail_id, vec!["python3", "-c", script], Some(10)).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["data"]["exit_code"], 0);
@@ -165,8 +162,8 @@ p = subprocess.run(['echo', 'from subprocess'], capture_output=True, text=True)
 print(json.dumps({'pid': os.getpid(), 'output': p.stdout.strip(), 'code': p.returncode}))
 "#;
 
-    let (status, json) = exec_in_jail(&router, &jail_id, vec!["python3", "-c", script], Some(10))
-        .await;
+    let (status, json) =
+        exec_in_jail(&router, &jail_id, vec!["python3", "-c", script], Some(10)).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["data"]["exit_code"], 0);
@@ -217,7 +214,8 @@ fs.rmdirSync(d);
 console.log(JSON.stringify({created: f, content, cleaned: true}));
 "#;
 
-    let (status, json) = exec_in_jail(&router, &jail_id, vec!["node", "-e", script], Some(10)).await;
+    let (status, json) =
+        exec_in_jail(&router, &jail_id, vec!["node", "-e", script], Some(10)).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["data"]["exit_code"], 0);
@@ -238,7 +236,8 @@ const out = execSync('echo from subprocess', {encoding: 'utf-8'});
 console.log(JSON.stringify({pid: process.pid, output: out.trim(), success: true}));
 "#;
 
-    let (status, json) = exec_in_jail(&router, &jail_id, vec!["node", "-e", script], Some(10)).await;
+    let (status, json) =
+        exec_in_jail(&router, &jail_id, vec!["node", "-e", script], Some(10)).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["data"]["exit_code"], 0);
@@ -392,8 +391,13 @@ async fn test_exec_in_non_running_jail() {
 async fn test_exec_in_nonexistent_jail() {
     let (router, _, _tmp) = test_app();
 
-    let (status, _) = exec_in_jail(&router, "nonexistent_jail_id", vec!["echo", "test"], Some(5))
-        .await;
+    let (status, _) = exec_in_jail(
+        &router,
+        "nonexistent_jail_id",
+        vec!["echo", "test"],
+        Some(5),
+    )
+    .await;
 
     assert_eq!(status, StatusCode::NOT_FOUND);
 }

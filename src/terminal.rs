@@ -193,8 +193,7 @@ pub async fn handle_terminal_websocket(
     initial_config: TerminalConfig,
 ) {
     // Spawn terminal session
-    let (session, mut output_rx) = match TerminalSession::spawn(&initial_config, &jail_env).await
-    {
+    let (session, mut output_rx) = match TerminalSession::spawn(&initial_config, &jail_env).await {
         Ok(s) => s,
         Err(e) => {
             let msg = ServerMessage::Error {
