@@ -49,20 +49,13 @@ pub struct CostAccumulator {
 }
 
 impl CostAccumulator {
-    pub fn record(
-        &mut self,
-        model: &str,
-        input_tokens: u64,
-        output_tokens: u64,
-        cost_usd: f64,
-    ) {
+    pub fn record(&mut self, model: &str, input_tokens: u64, output_tokens: u64, cost_usd: f64) {
         self.total_requests += 1;
         self.total_input_tokens += input_tokens;
         self.total_output_tokens += output_tokens;
         self.total_llm_cost_usd += cost_usd;
         *self.cost_by_model.entry(model.to_string()).or_default() += cost_usd;
-        *self.tokens_by_model.entry(model.to_string()).or_default() +=
-            input_tokens + output_tokens;
+        *self.tokens_by_model.entry(model.to_string()).or_default() += input_tokens + output_tokens;
     }
 }
 
