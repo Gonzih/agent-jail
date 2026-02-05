@@ -200,7 +200,7 @@ pub async fn handle_terminal_websocket(
                 message: format!("Failed to spawn terminal: {}", e),
             };
             let _ = socket
-                .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                 .await;
             return;
         }
@@ -210,7 +210,7 @@ pub async fn handle_terminal_websocket(
     if let Some(pid) = session.pid() {
         let msg = ServerMessage::Started { pid };
         if socket
-            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+            .send(Message::Text(serde_json::to_string(&msg).unwrap()))
             .await
             .is_err()
         {
@@ -254,7 +254,7 @@ pub async fn handle_terminal_websocket(
                                 }
                                 ClientMessage::Ping => {
                                     let msg = ServerMessage::Pong;
-                                    if socket.send(Message::Text(serde_json::to_string(&msg).unwrap().into())).await.is_err() {
+                                    if socket.send(Message::Text(serde_json::to_string(&msg).unwrap())).await.is_err() {
                                         break;
                                     }
                                 }
@@ -277,7 +277,7 @@ pub async fn handle_terminal_websocket(
                 let msg = ServerMessage::Output {
                     data: String::from_utf8_lossy(&data).to_string(),
                 };
-                if socket.send(Message::Text(serde_json::to_string(&msg).unwrap().into())).await.is_err() {
+                if socket.send(Message::Text(serde_json::to_string(&msg).unwrap())).await.is_err() {
                     break;
                 }
             }
@@ -285,7 +285,7 @@ pub async fn handle_terminal_websocket(
             // Handle process exit
             Some(code) = exit_rx.recv() => {
                 let msg = ServerMessage::Exited { code };
-                let _ = socket.send(Message::Text(serde_json::to_string(&msg).unwrap().into())).await;
+                let _ = socket.send(Message::Text(serde_json::to_string(&msg).unwrap())).await;
                 break;
             }
         }
