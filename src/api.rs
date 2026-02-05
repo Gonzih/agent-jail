@@ -1,3 +1,4 @@
+use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{Path, Query, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
@@ -9,6 +10,8 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
+
+use crate::terminal::{handle_terminal_websocket, TerminalConfig};
 
 use crate::cost::{CostAccumulator, CostSummary, LlmUsageEvent, ModelCostDetail};
 use crate::error::{ApiError, ApiResponse};
@@ -31,6 +34,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/jails/:id", delete(destroy_jail))
         // Execution
         .route("/jails/:id/exec", post(exec_in_jail))
+        // Terminal (WebSocket)
+        .route("/jails/:id/terminal", get(terminal_websocket))
         // Observation
         .route("/jails/:id/events", get(event_stream))
         .route("/jails/:id/report", get(get_report))
@@ -319,39 +324,68 @@ async fn exec_in_jail(
         )));
     }
 
-    if req.cmd.is_empty() {
-        return Err(ApiError::BadRequest("Command cannot be empty".into()));
-    }
+    // Get event sender for process observation (specific to this jail)
+    let event_tx = state.event_sender_for_jail(&id);
 
-    // Build environment string showing injected vars
-    let env_info: Vec<String> = jail
-        .env_vars
-        .iter()
-        .map(|(k, v)| {
-            if k.contains("KEY") {
-                format!("{}={}...", k, &v[..v.len().min(8)])
-            } else {
-                format!("{}={}", k, v)
-            }
-        })
-        .collect();
+    // Execute the command
+    let result = crate::executor::execute(&req, &jail.env_vars, Some(&event_tx), &id).await?;
 
-    let result = ExecResult {
-        exit_code: 0,
-        stdout: format!(
-            "[stub] Would execute: {}\nEnvironment: {}",
-            req.cmd.join(" "),
-            if env_info.is_empty() {
-                "(none)".to_string()
-            } else {
-                env_info.join(", ")
-            }
-        ),
-        stderr: String::new(),
-        duration_ms: 0,
-    };
+    // Store process events
+    // Note: Events are already sent via the channel, but we also persist them
+    // This happens automatically through the broadcast → storage flow
+
+    tracing::info!(
+        jail_id = %id,
+        cmd = ?req.cmd,
+        exit_code = result.exit_code,
+        duration_ms = result.duration_ms,
+        "Command executed"
+    );
 
     Ok(Json(ApiResponse::ok(result)))
+}
+
+// ── Terminal (WebSocket) ───────────────────────────────────────
+
+#[derive(Debug, serde::Deserialize)]
+struct TerminalQuery {
+    shell: Option<String>,
+    cols: Option<u16>,
+    rows: Option<u16>,
+}
+
+async fn terminal_websocket(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(query): Query<TerminalQuery>,
+    ws: WebSocketUpgrade,
+) -> Result<impl IntoResponse, ApiError> {
+    let jail = state
+        .get_jail(&id)
+        .ok_or_else(|| ApiError::NotFound(format!("Jail not found: {}", id)))?;
+
+    if jail.status != JailStatus::Running {
+        return Err(ApiError::NotRunning(format!(
+            "Jail is not running (status: {:?})",
+            jail.status
+        )));
+    }
+
+    let config = TerminalConfig {
+        shell: query.shell.unwrap_or_else(|| "/bin/sh".into()),
+        cwd: None,
+        env: Vec::new(),
+        cols: query.cols.unwrap_or(80),
+        rows: query.rows.unwrap_or(24),
+    };
+
+    let jail_env = jail.env_vars.clone();
+
+    tracing::info!(jail_id = %id, shell = %config.shell, "Terminal WebSocket connecting");
+
+    Ok(ws.on_upgrade(move |socket| async move {
+        handle_terminal_websocket(socket, jail_env, config).await;
+    }))
 }
 
 // ── Observation ────────────────────────────────────────────────

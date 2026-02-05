@@ -20,8 +20,14 @@ pub enum ApiError {
     #[error("Unsupported on this platform: {0}")]
     Unsupported(String),
 
+    #[error("Timeout: {0}")]
+    Timeout(String),
+
     #[error("Internal error: {0}")]
     Internal(String),
+
+    #[error("Internal error: {0}")]
+    InternalError(String),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -41,7 +47,9 @@ impl IntoResponse for ApiError {
             Self::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
             Self::NotRunning(msg) => (StatusCode::CONFLICT, msg.clone()),
             Self::Unsupported(msg) => (StatusCode::NOT_IMPLEMENTED, msg.clone()),
+            Self::Timeout(msg) => (StatusCode::REQUEST_TIMEOUT, msg.clone()),
             Self::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
+            Self::InternalError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
             Self::Io(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
             Self::Json(e) => (StatusCode::BAD_REQUEST, e.to_string()),
             Self::Anyhow(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),

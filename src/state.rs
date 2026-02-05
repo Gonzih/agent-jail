@@ -2,11 +2,11 @@ use crate::config::Config;
 use crate::llm::{LlmInterceptor, LlmSession};
 use crate::rootfs::RootfsProvider;
 use crate::storage::Storage;
-use crate::types::{Jail, JailId, Snapshot, SnapshotId};
+use crate::types::{Jail, JailId, ObservationEvent, Snapshot, SnapshotId};
 use dashmap::DashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 
 pub struct AppState {
     pub jails: DashMap<JailId, Jail>,
@@ -74,6 +74,56 @@ impl AppState {
         let _ = self
             .event_tx
             .send((jail_id.clone(), event_json.to_string()));
+    }
+
+    /// Create an event sender that stores events to disk and broadcasts them.
+    /// Returns an mpsc::UnboundedSender that can be passed to the executor.
+    pub fn event_sender(&self) -> mpsc::UnboundedSender<ObservationEvent> {
+        let (tx, mut rx) = mpsc::unbounded_channel::<ObservationEvent>();
+        let storage = self.storage.clone();
+        let event_tx = self.event_tx.clone();
+
+        // Spawn a task to bridge mpsc → storage + broadcast
+        tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                // Extract jail_id from event
+                let jail_id = match &event {
+                    ObservationEvent::Syscall(e) => format!("jail_{}", e.pid), // approximation
+                    ObservationEvent::File(e) => format!("jail_{}", e.pid),
+                    ObservationEvent::Network(e) => format!("jail_{}", e.pid),
+                    ObservationEvent::Process(e) => format!("jail_{}", e.pid),
+                    ObservationEvent::LlmUsage(e) => e.jail_id.clone(),
+                };
+
+                // Serialize and broadcast
+                if let Ok(json) = serde_json::to_string(&event) {
+                    let _ = event_tx.send((jail_id.clone(), json.clone()));
+                    // Store to disk
+                    let _ = storage.append_event(&jail_id, &event);
+                }
+            }
+        });
+
+        tx
+    }
+
+    /// Create an event sender for a specific jail that stores events to disk and broadcasts them.
+    pub fn event_sender_for_jail(&self, jail_id: &str) -> mpsc::UnboundedSender<ObservationEvent> {
+        let (tx, mut rx) = mpsc::unbounded_channel::<ObservationEvent>();
+        let storage = self.storage.clone();
+        let event_tx = self.event_tx.clone();
+        let jid = jail_id.to_string();
+
+        tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                if let Ok(json) = serde_json::to_string(&event) {
+                    let _ = event_tx.send((jid.clone(), json));
+                    let _ = storage.append_event(&jid, &event);
+                }
+            }
+        });
+
+        tx
     }
 }
 

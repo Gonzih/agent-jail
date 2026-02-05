@@ -4,6 +4,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
+#[derive(Clone)]
 pub struct Storage {
     config: Config,
 }
